@@ -2,7 +2,7 @@ import rclpy # Import the ROS 2 client library for Python
 from rclpy.node import Node # Import the Node class for creating ROS 2 nodes
 from sensor_msgs.msg import Image,PointCloud2
 from geometry_msgs.msg import PoseStamped,Pose
-
+from utils.utils import find_edge_channel
 
 import cv2
 from cv_bridge import CvBridge
@@ -10,6 +10,7 @@ from cv_bridge import CvBridge
 import numpy as np
 import sensor_msgs_py.point_cloud2 as pc2
 import torch
+import torchvision.transforms as transforms
 from Perception.model.unet import UNet
 from Perception.evaluate import evaluate
 
@@ -27,7 +28,7 @@ device = "cpu"
 class Perception(Node):
     
  
-    def __init__(self,trained_model = "/home/emav/ros2_ws/src/perception_and_controller/Perception/model.pt"):
+    def __init__(self,trained_model = "/content/drive/MyDrive/perception-project-mhshabbir/epoch_29.pt"):
         super().__init__('Perception')
         self.image_subscription = self.create_subscription(
             Image,
@@ -54,7 +55,35 @@ class Perception(Node):
         
 
 
+    def evaluate(self, model, image):
 
+        image = cv2.imread(image)
+
+        if image is None:
+            print(f"Failed to load image from {full_path}")
+            return None
+
+        # print(image.shape)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        edges, edges_inv = find_edge_channel(image)
+        output_image = np.zeros((gray.shape[0], gray.shape[1], 3), dtype=np.uint8)
+        output_image[:, :, 0] = gray
+        output_image[:, :, 1] = edges
+        output_image[:, :, 2] = edges_inv
+
+        transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((180, 330)),
+            transforms.ToTensor()
+        ])
+        test_img = transform(output_image).unsqueeze(0).to(device)
+        output = model(test_img)
+        pred = torch.sigmoid(output)
+        pred = torch.where(pred > 0.5, 1, 0)
+        pred = pred.detach().cpu().squeeze().numpy()
+
+        pred = cv2.resize(pred.astype(float), (1080, 720), cv2.INTER_AREA)
+        return pred
 
 
     def calculate_path(self,current_frame,pred):
